@@ -3,6 +3,7 @@ from io import BytesIO
 import json
 import os
 import re
+import time
 from bs4 import BeautifulSoup
 from PIL import Image
 import requests
@@ -13,14 +14,20 @@ SAVE_DIR = r"D:\sportsonline"
 IMAGE_SAVE_DIR = os.path.join(SAVE_DIR, "images")
 SAVE_FILE = os.path.join(SAVE_DIR, "sportsonline.w3u")
 
-# ตั้งค่า GitHub และ jsDelivr CDN ตามที่คุณระบุ
+# ตั้งค่า GitHub และ jsDelivr CDN
 GITHUB_USER = "abh210022"
 REPO_NAME = "FTB-LOGO"
 BRANCH = "main"
 
-HEADER_IMAGE = "https://drive.google.com/uc?id=1F1Rw4jTwr6YPU-esWsTT2HkFP-JdngAA&export=download"
-GROUP_IMAGE = "https://drive.google.com/uc?id=1VVIg15m3Y3J8VtFGtNq10MToP7Zg0NVi&export=download"
-DEFAULT_MATCH_IMAGE = "https://drive.google.com/uc?id=1VVIg15m3Y3J8VtFGtNq10MToP7Zg0NVi&export=download"
+HEADER_IMAGE = (
+    "https://drive.google.com/uc?id=1F1Rw4jTwr6YPU-esWsTT2HkFP-JdngAA&export=download"
+)
+GROUP_IMAGE = (
+    "https://drive.google.com/uc?id=1VVIg15m3Y3J8VtFGtNq10MToP7Zg0NVi&export=download"
+)
+DEFAULT_MATCH_IMAGE = (
+    "https://drive.google.com/uc?id=1VVIg15m3Y3J8VtFGtNq10MToP7Zg0NVi&export=download"
+)
 
 match_database = {}
 
@@ -76,28 +83,31 @@ def extract_channel_name(url):
     return ""
 
 
-# 1. ฟังก์ชันสร้างภาพกราฟิกคู่แข่งขันและคืนค่าเป็น jsDelivr CDN URL
 def generate_fixture_image(league_url, home_url, away_url, match_id):
   os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
   filename = f"fixture_{match_id}.png"
   file_path = os.path.join(IMAGE_SAVE_DIR, filename)
-
-  # สร้าง URL สำเร็จรูปสำหรับ jsDelivr CDN
   cdn_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USER}/{REPO_NAME}@{BRANCH}/images/{filename}"
 
-  # หากมีไฟล์อยู่แล้ว ข้ามการเรนเดอร์ซ้ำเพื่อความรวดเร็ว
   if os.path.exists(file_path):
     return cdn_url
 
   try:
+    headers = {"User-Agent": "Mozilla/5.0"}
     league_res = requests.get(
-        league_url if league_url else DEFAULT_MATCH_IMAGE, timeout=10
+        league_url if league_url else DEFAULT_MATCH_IMAGE,
+        headers=headers,
+        timeout=10,
     )
     home_res = requests.get(
-        home_url if home_url else DEFAULT_MATCH_IMAGE, timeout=10
+        home_url if home_url else DEFAULT_MATCH_IMAGE,
+        headers=headers,
+        timeout=10,
     )
     away_res = requests.get(
-        away_url if away_url else DEFAULT_MATCH_IMAGE, timeout=10
+        away_url if away_url else DEFAULT_MATCH_IMAGE,
+        headers=headers,
+        timeout=10,
     )
 
     league_img = Image.open(BytesIO(league_res.content)).convert("RGBA")
@@ -106,7 +116,6 @@ def generate_fixture_image(league_url, home_url, away_url, match_id):
   except Exception:
     return DEFAULT_MATCH_IMAGE
 
-  # สัดส่วนขนาด (โลโก้ลีกตรงกลางเล็กกว่า, ทีมเหย้า-เยือนใหญ่เด่นชัด)
   team_size = (130, 130)
   league_size = (75, 75)
 
@@ -128,7 +137,6 @@ def generate_fixture_image(league_url, home_url, away_url, match_id):
   max_height = max(team_size[1], league_size[1])
   total_height = (padding * 2) + max_height
 
-  # แคนวาสพื้นหลังโปร่งใส (Transparent PNG)
   canvas = Image.new("RGBA", (total_width, total_height), (0, 0, 0, 0))
 
   home_y = padding + (max_height - team_size[1]) // 2
@@ -145,9 +153,6 @@ def generate_fixture_image(league_url, home_url, away_url, match_id):
 
   canvas.save(file_path, "PNG")
   return cdn_url
-
-
-# ================= MAIN PIPELINE =================
 
 
 def process_and_fetch_dates(lines):
@@ -326,7 +331,7 @@ def generate_json_final(processed_matches):
 
     groups_map[date_key]["stations"].append({
         "name": display,
-        "image": fixture_image_url,  # ลิงก์ jsDelivr CDN ที่พร้อมนำไปใช้งาน
+        "image": fixture_image_url,
         "url": item["url"],
         "referer": "https://sportsonline.st",
         "info": info_text,
@@ -356,8 +361,32 @@ def generate_json_final(processed_matches):
 if __name__ == "__main__":
   try:
     print("[STEP 1] กำลังอ่านข้อมูลโปรแกรมแข่งขันจาก sportsonline.st...")
-    r = requests.get(PROG_URL, timeout=15)
-    dates, matches = process_and_fetch_dates(r.text.splitlines())
+    max_retries = 3
+    prog_text = None
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+    }
+
+    for attempt in range(max_retries):
+      try:
+        print(f"กำลังเชื่อมต่อ (ครั้งที่ {attempt + 1}/{max_retries})...")
+        r = requests.get(PROG_URL, headers=headers, timeout=30)
+        r.raise_for_status()
+        prog_text = r.content.decode("utf-8-sig")
+        break
+      except requests.exceptions.RequestException as e:
+        print(f"⚠️ การเชื่อมต่อขัดข้อง: {e}")
+        if attempt < max_retries - 1:
+          print("กำลังลองใหม่อีกครั้งใน 3 วินาที...")
+          time.sleep(3)
+        else:
+          raise Exception(
+              "ไม่สามารถเชื่อมต่อกับ sportsonline.st ได้หลังจากลองครบ 3 ครั้ง"
+          )
+
+    dates, matches = process_and_fetch_dates(prog_text.splitlines())
 
     print(
         f"[STEP 2] พบวันที่ต้องดึงข้อมูลทั้งหมด {len(dates)} วัน กำลังดึงจาก"
